@@ -40,6 +40,7 @@ export default function Layout({ children }) {
               <span className="live-dot"></span>
               LIVE Campaigns!
             </Link>
+            {user && <NavItem to="/chat" testId="nav-chat">Chat</NavItem>}
             {user && <NavItem to="/dashboard" testId="nav-dashboard">Dashboard</NavItem>}
           </div>
 

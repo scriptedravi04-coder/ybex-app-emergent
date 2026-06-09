@@ -319,3 +319,173 @@ def test_dashboard_stats_brand(brand_session):
     d = r.json()
     for k in ["campaigns", "collabs_sent", "waves_sent"]:
         assert k in d
+
+
+
+# ---------- Iteration 2: File upload ----------
+def test_upload_and_get_file(creator_session):
+    s = creator_session["session"]
+    # 1x1 PNG bytes
+    png = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06"
+           b"\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\x00\x00\x00\x03\x00\x01"
+           b"\xa3\x18T\x9a\x00\x00\x00\x00IEND\xaeB`\x82")
+    files = {"file": ("test.png", png, "image/png")}
+    # Don't send Content-Type from session headers (multipart needs boundary). Use a fresh request with token.
+    headers = {"Authorization": s.headers.get("Authorization")}
+    r = requests.post(f"{API}/upload", files=files, headers=headers, timeout=60)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "file_id" in body and "url" in body and "path" in body
+    fid = body["file_id"]
+    # GET file
+    r2 = requests.get(f"{API}/files/{fid}", timeout=30)
+    assert r2.status_code == 200
+    assert r2.headers.get("content-type", "").startswith("image/")
+    assert len(r2.content) > 0
+
+
+def test_upload_unsupported_type(creator_session):
+    s = creator_session["session"]
+    headers = {"Authorization": s.headers.get("Authorization")}
+    files = {"file": ("test.exe", b"MZ\x90\x00", "application/octet-stream")}
+    r = requests.post(f"{API}/upload", files=files, headers=headers, timeout=30)
+    assert r.status_code == 400
+
+
+def test_file_404():
+    r = requests.get(f"{API}/files/nonexistent_xxxxxxxx", timeout=15)
+    assert r.status_code == 404
+
+
+# ---------- Iteration 2: Chat ----------
+def test_chat_send_and_thread(creator_session, brand_session):
+    bs = brand_session["session"]
+    cs = creator_session["session"]
+    creator_id = creator_session["user"]["user_id"]
+    # brand → creator
+    r = bs.post(f"{API}/chat/send", json={"to_user_id": creator_id, "text": "Hello from brand"}, timeout=15)
+    assert r.status_code == 200, r.text
+    msg = r.json()
+    assert msg["text"] == "Hello from brand"
+    assert msg["to_user_id"] == creator_id
+    assert "thread_id" in msg
+
+    # creator fetches thread with brand
+    me_brand = bs.get(f"{API}/auth/me", timeout=15).json()
+    brand_uid = me_brand["user_id"]
+    r2 = cs.get(f"{API}/chat/{brand_uid}", timeout=15)
+    assert r2.status_code == 200
+    msgs = r2.json()
+    assert len(msgs) >= 1
+    assert any(m["text"] == "Hello from brand" for m in msgs)
+    # asc sort
+    ts = [m["created_at"] for m in msgs]
+    assert ts == sorted(ts)
+
+    # creator replies
+    import time as _t
+    _t.sleep(0.05)
+    r3 = cs.post(f"{API}/chat/send", json={"to_user_id": brand_uid, "text": "Hi back"}, timeout=15)
+    assert r3.status_code == 200
+
+    # since param – fetch new messages only
+    last_at = msgs[-1]["created_at"]
+    r4 = cs.get(f"{API}/chat/{brand_uid}?since={last_at}", timeout=15)
+    assert r4.status_code == 200
+    new_msgs = r4.json()
+    # At least the 'Hi back' should now be visible (its ts > last_at)
+    assert any(m.get("text") == "Hi back" and m["created_at"] >= last_at for m in new_msgs)
+
+    # creator gets chat notif from brand
+    notifs = cs.get(f"{API}/notifications", timeout=15).json()
+    assert any(n.get("type") == "chat" for n in notifs)
+
+
+def test_chat_threads_list(brand_session):
+    bs = brand_session["session"]
+    r = bs.get(f"{API}/chat/threads/list", timeout=15)
+    assert r.status_code == 200
+    threads = r.json()
+    assert isinstance(threads, list)
+    if threads:
+        t = threads[0]
+        assert "last_text" in t and "last_at" in t and "other_user_id" in t
+
+
+# ---------- Iteration 2: ROI / Close campaign ----------
+def test_close_campaign_and_performance(brand_session, creator_session):
+    bs = brand_session["session"]
+    cs = creator_session["session"]
+    creator_id = creator_session["user"]["user_id"]
+
+    # 1) brand creates campaign
+    payload = {
+        "title": "TEST_ROI_" + uuid.uuid4().hex[:6],
+        "description": "ROI test",
+        "budget_min": 5000, "budget_max": 15000,
+        "deliverables": ["reel"], "categories": ["Fashion"], "platforms": ["instagram"]
+    }
+    cr = bs.post(f"{API}/campaigns", json=payload, timeout=15)
+    assert cr.status_code == 200
+    cid = cr.json()["campaign_id"]
+
+    # 2) creator applies
+    ar = cs.post(f"{API}/campaigns/apply", json={"campaign_id": cid, "proposed_amount": 10000, "pitch": "p"}, timeout=15)
+    assert ar.status_code == 200
+
+    # 3) fetch app id and mark accepted via direct mongo? No — we test the path with application_id param
+    camp = requests.get(f"{API}/campaigns/{cid}", timeout=15).json()
+    applicants = camp.get("applicants", [])
+    app_target = next((a for a in applicants if a["creator_user_id"] == creator_id), None)
+    assert app_target is not None
+    application_id = app_target["application_id"]
+
+    # 4) brand closes campaign with explicit application_id
+    body = {
+        "actual_views": 80000,
+        "actual_engagement_rate": 6.5,
+        "on_time": True,
+        "content_quality": 5,
+        "brand_rating": 4
+    }
+    r = bs.post(f"{API}/campaigns/{cid}/close?application_id={application_id}", json=body, timeout=15)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res["campaign_id"] == cid
+    assert res["creator_user_id"] == creator_id
+    assert 40 <= res["performance_score"] <= 99
+    assert res["cpv"] > 0
+    assert res["roi_score"] > 0
+
+    # 5) Verify campaign marked closed
+    camp2 = requests.get(f"{API}/campaigns/{cid}", timeout=15).json()
+    assert camp2.get("status") == "closed"
+    assert "performance" in camp2
+
+    # 6) Performance history endpoint
+    pr = requests.get(f"{API}/performance/{creator_id}", timeout=15)
+    assert pr.status_code == 200
+    rows = pr.json()
+    assert isinstance(rows, list)
+    assert any(row["campaign_id"] == cid for row in rows)
+
+    # 7) Creator gets performance_score notif
+    notifs = cs.get(f"{API}/notifications", timeout=15).json()
+    assert any(n.get("type") == "performance_score" for n in notifs)
+
+
+def test_close_campaign_no_accepted_app(brand_session):
+    bs = brand_session["session"]
+    payload = {
+        "title": "TEST_ROI_NA_" + uuid.uuid4().hex[:6],
+        "description": "no apps",
+        "budget_min": 1, "budget_max": 2,
+        "deliverables": ["reel"], "categories": ["Fashion"], "platforms": ["instagram"]
+    }
+    cr = bs.post(f"{API}/campaigns", json=payload, timeout=15)
+    cid = cr.json()["campaign_id"]
+    r = bs.post(f"{API}/campaigns/{cid}/close", json={
+        "actual_views": 1000, "actual_engagement_rate": 5.0, "on_time": True,
+        "content_quality": 4, "brand_rating": 4
+    }, timeout=15)
+    assert r.status_code == 400

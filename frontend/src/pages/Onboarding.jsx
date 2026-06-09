@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import { Sparkles, Building2, Users } from "lucide-react";
+import ImageUpload from "../components/ImageUpload";
 
 const CATEGORIES = ["Fashion","Beauty","Tech","Food","Travel","Fitness","Comedy","Lifestyle","Finance","Education","Music","Art","Parenting","Sports","Gaming","Spiritual","Automotive","Wellness","Books","Home Decor"];
 const LANGUAGES = ["Hindi","English","Tamil","Telugu","Marathi","Bengali","Gujarati","Punjabi","Kannada","Malayalam","Urdu","Bhojpuri"];
@@ -97,8 +98,8 @@ export default function Onboarding() {
 
         <div className="mt-10 space-y-6 bg-[#13131B] border border-white/10 rounded-2xl p-8">
           <div>
-            <label className="label-mini block mb-1.5">Profile Photo URL</label>
-            <input data-testid="onb-photo" value={creator.photo} onChange={(e)=>setCreator({...creator, photo:e.target.value})} className="input-field" placeholder="https://..."/>
+            <label className="label-mini block mb-2">Profile Photo</label>
+            <ImageUpload value={creator.photo} onChange={(url)=>setCreator({...creator, photo:url})} label="Photo" testId="onb-photo-upload"/>
           </div>
           <div>
             <label className="label-mini block mb-1.5">Bio</label>
@@ -180,6 +181,10 @@ export default function Onboarding() {
       <div className="mt-10 space-y-5 bg-[#13131B] border border-white/10 rounded-2xl p-8">
         <div><label className="label-mini block mb-1.5">Company Name</label><input data-testid="brand-name" value={brand.company_name} onChange={(e)=>setBrand({...brand, company_name:e.target.value})} className="input-field"/></div>
         <div><label className="label-mini block mb-1.5">Industry</label><input data-testid="brand-industry" value={brand.industry} onChange={(e)=>setBrand({...brand, industry:e.target.value})} className="input-field" placeholder="D2C / SaaS / E-commerce"/></div>
+        <div>
+          <label className="label-mini block mb-2">Brand Logo</label>
+          <ImageUpload value={brand.logo} onChange={(url)=>setBrand({...brand, logo:url})} label="Logo" testId="brand-logo-upload"/>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div><label className="label-mini block mb-1.5">Team Size</label><select data-testid="brand-team" value={brand.team_size} onChange={(e)=>setBrand({...brand, team_size:e.target.value})} className="input-field"><option>1-10</option><option>10-50</option><option>50-200</option><option>200+</option></select></div>
           <div><label className="label-mini block mb-1.5">Website</label><input data-testid="brand-website" value={brand.website} onChange={(e)=>setBrand({...brand, website:e.target.value})} className="input-field" placeholder="https://..."/></div>

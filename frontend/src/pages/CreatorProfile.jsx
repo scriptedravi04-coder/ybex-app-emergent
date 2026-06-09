@@ -57,6 +57,9 @@ export default function CreatorProfile() {
             <button onClick={wave} data-testid="wave-btn" className="btn-secondary flex-1">Wave 👋</button>
             <button onClick={()=>setCollabOpen(true)} data-testid="collab-btn" className="btn-primary flex-1">Collab</button>
           </div>
+          {user && user.user_id !== c.user_id && (
+            <Link to={`/chat/${c.user_id}`} data-testid="chat-btn" className="btn-secondary w-full text-sm">💬 Message</Link>
+          )}
           <div className="bg-[#13131B] border border-white/10 rounded-2xl p-5">
             <h3 className="label-mini mb-3">Quick Stats</h3>
             <div className="grid grid-cols-2 gap-3">

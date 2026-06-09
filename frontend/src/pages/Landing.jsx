@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
-import { motion, useScroll, useTransform } from "framer-motion";
+import { motion, useScroll, useTransform, useMotionValueEvent } from "framer-motion";
 import { api } from "../lib/api";
 import {
   ArrowRight, Users, Hexagon, Lightbulb, Search, Briefcase, Eye, Play,
@@ -20,16 +20,21 @@ const BRANDS = ["Decathlon","Oppo","Samsung","Flipkart","Adidas","Cult.fit","JSW
 export default function Landing() {
   const [creators, setCreators] = useState([]);
   const [activeStep, setActiveStep] = useState(0);
+  // Scroll-locked timeline activation
   const timelineRef = useRef(null);
+  const { scrollYProgress } = useScroll({
+    target: timelineRef,
+    offset: ["start 70%", "end 30%"],
+  });
+
+  useMotionValueEvent(scrollYProgress, "change", (v) => {
+    // Map progress 0..1 → step 0..2
+    const step = Math.min(2, Math.max(0, Math.floor(v * 3)));
+    setActiveStep(step);
+  });
 
   useEffect(() => {
     api.get("/creators?limit=12&sort_by=performance").then(({data}) => setCreators(data)).catch(()=>{});
-  }, []);
-
-  // Cycle through timeline steps
-  useEffect(() => {
-    const id = setInterval(() => setActiveStep((s) => (s + 1) % 3), 3000);
-    return () => clearInterval(id);
   }, []);
 
   return (

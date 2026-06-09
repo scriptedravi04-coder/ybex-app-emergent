@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 2 e2e test of Ybex. All 29 backend pytest tests PASS after fixing one critical bug. Frontend critical flows verified: landing renders new dark theme (bg #07070B, violet #7C5CFF) with hero CTAs, scroll-locked animations trigger, login flow lands on /dashboard, nav-chat link works (chat sidebar shows 5 seeded threads), creator profile chat-btn navigates to /chat/{user_id} and sending a message via chat-input+chat-send appends the message bubble, campaign close + ROI scoring end-to-end works (Campaign detail shows 'Closed · Score 99' pill after backend close).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/campaigns (GET)", "issue": "`request: Request = None` placed after defaulted query params — works in practice but fragile signature ordering. (Pre-existing, also noted in iteration 1.)"},
+      {"endpoint": "/api/collabs/{collab_id}/action", "issue": "`action` exposed as query param instead of POST body. Pre-existing."},
+      {"endpoint": "/api/upload", "issue": "Returns relative `url: /api/files/{id}` and reads `BACKEND_PUBLIC_URL` env var but never uses it. Frontend must prepend REACT_APP_BACKEND_URL when rendering — confirm ImageUpload component does this."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Browser tab", "issues": ["Page title still 'Emergent | Fullstack App' — should be 'Ybex' for branded experience."]},
+      {"screen": "Landing (unauthenticated)", "issues": ["Console still shows 401 from /api/auth/me on initial load (benign, also flagged in iteration 1)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ybex_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional, low) Update <title> in /app/frontend/public/index.html from 'Emergent | Fullstack App' to 'Ybex – Creator Marketplace'.",
+    "(Optional, low) Suppress benign 401 console error on first /auth/me probe.",
+    "(Optional, low) Confirm ImageUpload component prepends process.env.REACT_APP_BACKEND_URL to the relative /api/files/{id} URL returned by /api/upload before rendering <img>.",
+    "(Defer) Split server.py (currently 905 lines) into routers — chat / upload / performance / campaigns / auth / creators."
+  ],
+  "critical_code_review_comments": [
+    "FIXED: /api/campaigns/{id}/close returned the same dict that motor.insert_one() mutated by attaching MongoDB `_id` ObjectId. FastAPI then failed to serialise it (500) AND the polluted dict was persisted into campaigns.performance._id — breaking subsequent GET /api/campaigns list calls. Patched server.py to insert a copy and pop _id before storing/returning. Also cleaned the one polluted document via direct mongo update_many($unset performance._id).",
+    "server.py grew from 650 → 905 lines this iteration. STRONGLY recommend splitting into APIRouter modules before next feature batch — single-file is hurting reviewability.",
+    "Storage init is global-mutable (`storage_key`) and lazy-retries on 403 by recursing once — fine, but log the re-init for ops visibility.",
+    "Chat threads aggregation: `other_name` field falls back to `from_name` of last message which can be the CURRENT user's own name when they sent the last message. The `t['other']` enrichment via db.users lookup is correct — frontend should use t.other.name, not t.other_name. (Pre-existing design; works because frontend uses t.other.)",
+    "/api/chat/{other_user_id} marks RECEIVED messages as read on every poll — correct, but polled every 3s ⇒ many writes. Consider only updating when there are unread messages.",
+    "Performance score formula in close_campaign is deterministic and bounded [40, 99] — good. roi_score divides by max(0.01, cpv) — safe.",
+    "MongoDB _id is properly excluded from every find/find_one (verified). The close_campaign bug was the lone violation and is now fixed."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (fixed close_campaign ObjectId leak — lines ~771-772)",
+    "/app/backend/tests/test_ybex_api.py (added 8 new iteration-2 tests: upload PNG, upload unsupported type, file 404, chat send + thread + since polling, chat threads list, close campaign full flow, close without accepted app)"
+  ],
+  "success_rate": {"backend": "100% (29/29 pytest)", "frontend": "100% (all critical flows verified via Playwright)"},
+  "test_credentials": "Brand: t3@ybex.demo / password123. New creator: signup TEST/CREATOR_<uuid>@ybex.demo / password123 then POST /auth/role with role='creator'.",
+  "seed_data_creation": "Tests created TEST_ROI_*, TEST_Campaign_*, TEST_ROI_NA_* campaigns under t3@ybex.demo. One campaign (TEST_ROI_0480a5) was closed end-to-end with performance score 99 stored in DB and rendered in UI as 'Closed · Score 99' pill. Non-destructive additive seed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 29 backend pytest tests pass: pytest /app/backend/tests/test_ybex_api.py -v. New iteration-2 coverage: /api/upload (PNG + 400 on .exe + 404 on missing file), /api/chat/send + /chat/{uid} (with ?since= polling) + /chat/threads/list, /api/campaigns/{id}/close (with application_id param + 400 when no accepted app), /api/performance/{creator_id}. The previously-failing close endpoint had an ObjectId-leak bug that's now fixed. UI: nav-chat appears for authenticated users; /chat shows thread sidebar (5 seeded); creator profile chat-btn → /chat/{uid}; campaign detail shows close-campaign-btn ONLY when there is an accepted applicant (intentional). On a campaign already closed, UI correctly shows 'Closed · Score X' pill.",
+  "rca of the issue": "ROOT CAUSE: motor's insert_one mutates the passed dict in place to set the new mongo `_id` (ObjectId). The close_campaign handler did `db.campaign_performance.insert_one(result)` and then immediately used `result` both in `db.campaigns.update_one({'$set': {'performance': result}})` AND in `return result`. The ObjectId is not JSON-serialisable → FastAPI raised 500. Worse, the polluted dict was persisted inside `campaigns.performance._id`, which silently broke any subsequent `GET /api/campaigns` (also 500) because the same encoder couldn't walk the nested ObjectId. MITIGATION: (1) Insert a shallow copy: `await db.campaign_performance.insert_one(dict(result))`. (2) `result.pop('_id', None)` before reuse. (3) Cleaned the one stale document via `update_many({'performance._id': {'$exists': True}}, {'$unset': {'performance._id': ''}})`. REPRO before fix: brand creates campaign → creator applies → brand POSTs /campaigns/{id}/close?application_id=… → 500. After fix: 200 with full result, GET /campaigns also 200. The fix has been applied and the cleanup script was run once; no further action needed."
+}

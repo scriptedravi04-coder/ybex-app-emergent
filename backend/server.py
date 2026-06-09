@@ -1,5 +1,5 @@
 """Ybex - India's Most Transparent Influencer Marketplace - Backend API"""
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query, UploadFile, File, Header
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -10,6 +10,7 @@ import uuid
 import jwt
 import bcrypt
 import httpx
+import requests
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
@@ -626,6 +627,250 @@ async def dashboard_stats(request: Request):
         }
 
 
+# =================== Object Storage ===================
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+APP_NAME = "ybex"
+storage_key = None
+
+
+def init_storage():
+    global storage_key
+    if storage_key:
+        return storage_key
+    try:
+        resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
+        resp.raise_for_status()
+        storage_key = resp.json()["storage_key"]
+        return storage_key
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
+        return None
+
+
+def put_object(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=500, detail="Storage unavailable")
+    resp = requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data, timeout=120
+    )
+    if resp.status_code == 403:
+        global storage_key
+        storage_key = None
+        return put_object(path, data, content_type)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_object(path: str):
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=500, detail="Storage unavailable")
+    resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+MIME_TYPES = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
+
+
+@api.post("/upload")
+async def upload(file: UploadFile = File(...), request: Request = None):
+    user = await auth_required(request)
+    ext = (file.filename.split(".")[-1] if "." in (file.filename or "") else "bin").lower()
+    if ext not in MIME_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+    file_id = uuid.uuid4().hex
+    path = f"{APP_NAME}/uploads/{user['user_id']}/{file_id}.{ext}"
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 8MB)")
+    content_type = MIME_TYPES.get(ext, "application/octet-stream")
+    result = put_object(path, data, content_type)
+    doc = {
+        "file_id": file_id,
+        "user_id": user["user_id"],
+        "storage_path": result["path"],
+        "original_filename": file.filename,
+        "content_type": content_type,
+        "size": result["size"],
+        "is_deleted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.files.insert_one(doc)
+    backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
+    return {"file_id": file_id, "url": f"/api/files/{file_id}", "path": result["path"]}
+
+
+@api.get("/files/{file_id}")
+async def get_file(file_id: str):
+    record = await db.files.find_one({"file_id": file_id, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    data, content_type = get_object(record["storage_path"])
+    return Response(content=data, media_type=record.get("content_type", content_type))
+
+
+# =================== ROI Calculator + Auto Performance Scoring ===================
+class CloseCampaignReq(BaseModel):
+    actual_views: int
+    actual_engagement_rate: float
+    on_time: bool = True
+    content_quality: int = 4  # 1-5
+    brand_rating: int = 4  # 1-5
+
+
+@api.post("/campaigns/{campaign_id}/close")
+async def close_campaign(campaign_id: str, req: CloseCampaignReq, request: Request, application_id: Optional[str] = None):
+    """Close a campaign with one accepted application & compute performance score for the creator."""
+    user = await auth_required(request)
+    camp = await db.campaigns.find_one({"campaign_id": campaign_id, "brand_user_id": user["user_id"]}, {"_id": 0})
+    if not camp:
+        raise HTTPException(status_code=404, detail="Campaign not found or not yours")
+
+    applicants = camp.get("applicants", [])
+    target = None
+    for a in applicants:
+        if (application_id and a.get("application_id") == application_id) or (not application_id and a.get("status") == "accepted"):
+            target = a
+            break
+    if not target:
+        raise HTTPException(status_code=400, detail="No accepted application found")
+
+    paid = target.get("proposed_amount", 0)
+    avg_budget = (camp.get("budget_min", 0) + camp.get("budget_max", 0)) // 2 or 1
+    promised_views = max(1, paid * 5)  # rough estimate (1 view per ₹0.2)
+    view_ratio = min(1.5, req.actual_views / promised_views)
+    cpv = paid / max(1, req.actual_views)
+    roi_score = round(((1 / max(0.01, cpv)) * 10), 2)
+
+    # Performance score formula
+    score = int(
+        view_ratio * 30
+        + min(req.actual_engagement_rate, 12) * 3
+        + (10 if req.on_time else 0)
+        + req.content_quality * 4
+        + req.brand_rating * 4
+    )
+    score = max(40, min(99, score))
+
+    result = {
+        "campaign_id": campaign_id,
+        "creator_user_id": target["creator_user_id"],
+        "paid": paid,
+        "actual_views": req.actual_views,
+        "actual_engagement_rate": req.actual_engagement_rate,
+        "cpv": round(cpv, 3),
+        "roi_score": roi_score,
+        "performance_score": score,
+        "closed_at": iso(now_utc()),
+    }
+    await db.campaign_performance.insert_one(dict(result))
+    result.pop("_id", None)
+    await db.campaigns.update_one({"campaign_id": campaign_id}, {"$set": {"status": "closed", "performance": result}})
+
+    # Update creator's overall performance score (weighted avg)
+    creator = await db.creator_profiles.find_one({"user_id": target["creator_user_id"]}, {"_id": 0})
+    if creator:
+        prev = creator.get("performance_score", 70)
+        new_score = int(prev * 0.7 + score * 0.3)
+        await db.creator_profiles.update_one({"user_id": target["creator_user_id"]}, {"$set": {"performance_score": new_score}})
+
+    await db.notifications.insert_one({
+        "notif_id": new_id("notif"),
+        "user_id": target["creator_user_id"],
+        "type": "performance_score",
+        "message": f"Your performance score: {score}/100 for '{camp['title']}'",
+        "read": False,
+        "created_at": iso(now_utc()),
+    })
+    return result
+
+
+@api.get("/performance/{creator_id}")
+async def get_creator_performance(creator_id: str):
+    rows = await db.campaign_performance.find({"creator_user_id": creator_id}, {"_id": 0}).to_list(50)
+    return rows
+
+
+# =================== Chat (Polling) ===================
+class ChatMsgReq(BaseModel):
+    to_user_id: str
+    text: str
+
+
+def _thread_id(a: str, b: str) -> str:
+    return "_".join(sorted([a, b]))
+
+
+@api.post("/chat/send")
+async def chat_send(req: ChatMsgReq, request: Request):
+    user = await auth_required(request)
+    tid = _thread_id(user["user_id"], req.to_user_id)
+    msg = {
+        "message_id": new_id("msg"),
+        "thread_id": tid,
+        "from_user_id": user["user_id"],
+        "from_name": user["name"],
+        "to_user_id": req.to_user_id,
+        "text": req.text,
+        "read": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.chat_messages.insert_one(msg)
+    await db.notifications.insert_one({
+        "notif_id": new_id("notif"),
+        "user_id": req.to_user_id,
+        "type": "chat",
+        "message": f"{user['name']}: {req.text[:60]}",
+        "read": False,
+        "created_at": iso(now_utc()),
+    })
+    msg.pop("_id", None)
+    return msg
+
+
+@api.get("/chat/{other_user_id}")
+async def chat_thread(other_user_id: str, request: Request, since: Optional[str] = None):
+    user = await auth_required(request)
+    tid = _thread_id(user["user_id"], other_user_id)
+    query = {"thread_id": tid}
+    if since:
+        query["created_at"] = {"$gt": since}
+    msgs = await db.chat_messages.find(query, {"_id": 0}).sort("created_at", 1).to_list(500)
+    # Mark received as read
+    await db.chat_messages.update_many({"thread_id": tid, "to_user_id": user["user_id"], "read": False}, {"$set": {"read": True}})
+    return msgs
+
+
+@api.get("/chat/threads/list")
+async def list_threads(request: Request):
+    user = await auth_required(request)
+    uid = user["user_id"]
+    threads = await db.chat_messages.aggregate([
+        {"$match": {"$or": [{"from_user_id": uid}, {"to_user_id": uid}]}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {
+            "_id": "$thread_id",
+            "last_text": {"$first": "$text"},
+            "last_from": {"$first": "$from_user_id"},
+            "last_at": {"$first": "$created_at"},
+            "other_user_id": {"$first": {"$cond": [{"$eq": ["$from_user_id", uid]}, "$to_user_id", "$from_user_id"]}},
+            "other_name": {"$first": {"$cond": [{"$eq": ["$from_user_id", uid]}, "$from_name", "$from_name"]}},
+        }},
+        {"$sort": {"last_at": -1}},
+    ]).to_list(100)
+    # Enrich other_name properly
+    for t in threads:
+        other = await db.users.find_one({"user_id": t["other_user_id"]}, {"_id": 0, "password_hash": 0})
+        t["other"] = other or {"name": "Unknown"}
+        t.pop("_id", None)
+    return threads
+
+
 # =================== Health ===================
 @api.get("/")
 async def root():
@@ -647,3 +892,12 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+
+@app.on_event("startup")
+async def startup_storage():
+    try:
+        init_storage()
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.warning(f"Storage init deferred: {e}")
