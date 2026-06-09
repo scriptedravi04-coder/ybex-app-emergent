@@ -99,6 +99,74 @@ async def auth_required(request: Request) -> dict:
     return user
 
 
+async def optional_user(request: Request) -> Optional[dict]:
+    """Resolve the current user if present, else None (no error)."""
+    token = request.cookies.get("session_token")
+    if not token:
+        ah = request.headers.get("Authorization") or ""
+        if ah.startswith("Bearer "):
+            token = ah[7:]
+    if not token:
+        return None
+    try:
+        return await get_user_from_token(token)
+    except Exception:
+        return None
+
+
+# =================== Platform Fee Engine ===================
+# All percentages are admin-controlled and applied SERVER-SIDE so the
+# markup/deduction stays invisible to brands, agencies, and creators.
+DEFAULT_SETTINGS = {
+    "brand_markup_pct": 2.0,       # added to creator rates shown to brands
+    "creator_deduction_pct": 2.0,  # deducted from budgets/payouts shown to creators
+    "agency_markup_pct": 5.0,      # added to creator rates shown to agencies
+    "agency_deduction_pct": 5.0,   # deducted from agency-side payouts
+}
+
+
+async def get_settings() -> dict:
+    s = await db.platform_settings.find_one({"_id": "global"}) or {}
+    out = dict(DEFAULT_SETTINGS)
+    for k in DEFAULT_SETTINGS:
+        v = s.get(k)
+        if isinstance(v, (int, float)):
+            out[k] = float(v)
+    return out
+
+
+def markup_for_role(role: Optional[str], settings: dict) -> float:
+    """Percentage added to creator rates for the viewing role."""
+    if role == "brand":
+        return settings["brand_markup_pct"]
+    if role == "talent_manager":
+        return settings["agency_markup_pct"]
+    return 0.0  # creators see their own real rates; admins see real data
+
+
+def deduction_for_role(role: Optional[str], settings: dict) -> float:
+    """Percentage deducted from budgets/payouts shown to the viewing role."""
+    if role == "creator":
+        return settings["creator_deduction_pct"]
+    if role == "talent_manager":
+        return settings["agency_deduction_pct"]
+    return 0.0
+
+
+def _apply_pct(value, pct: float, direction: int) -> Any:
+    """direction +1 = markup, -1 = deduction."""
+    if not isinstance(value, (int, float)) or not pct:
+        return value
+    factor = 1 + (direction * pct / 100.0)
+    return int(round(value * factor))
+
+
+def transform_rate_card(rc: Optional[dict], pct: float) -> dict:
+    if not rc or not pct:
+        return rc or {}
+    return {k: _apply_pct(v, pct, 1) for k, v in rc.items()}
+
+
 # =================== Models ===================
 class SignupReq(BaseModel):
     name: str
@@ -168,6 +236,21 @@ class CampaignApplyReq(BaseModel):
     campaign_id: str
     proposed_amount: int
     pitch: str
+
+class SettingsReq(BaseModel):
+    brand_markup_pct: Optional[float] = None
+    creator_deduction_pct: Optional[float] = None
+    agency_markup_pct: Optional[float] = None
+    agency_deduction_pct: Optional[float] = None
+
+class ReportReq(BaseModel):
+    type: str               # content_violation | fake_engagement | payment_dispute | spam | other
+    severity: str = "medium"  # low | medium | high | critical
+    target: str             # e.g. "Post #123", "@handle", "Campaign #456"
+    description: Optional[str] = ""
+
+class VerificationDecisionReq(BaseModel):
+    note: Optional[str] = ""
 
 
 # =================== Auth Endpoints ===================
@@ -298,6 +381,9 @@ async def admin_stats(request: Request):
         "collabs": await db.collabs.count_documents({}),
         "waves": await db.waves.count_documents({}),
         "messages": await db.chat_messages.count_documents({}),
+        "pending_verifications": await db.verifications.count_documents({"status": "pending"}),
+        "open_reports": await db.reports.count_documents({"status": "open"}),
+        "critical_reports": await db.reports.count_documents({"status": "open", "severity": {"$in": ["high", "critical"]}}),
     }
 
 
@@ -333,6 +419,160 @@ async def admin_delete_campaign(campaign_id: str, request: Request):
     await admin_required(request)
     await db.campaigns.delete_one({"campaign_id": campaign_id})
     return {"ok": True}
+
+
+# ---- Fee Settings ----
+@api.get("/admin/settings")
+async def admin_get_settings(request: Request):
+    await admin_required(request)
+    return await get_settings()
+
+
+@api.put("/admin/settings")
+async def admin_update_settings(req: SettingsReq, request: Request):
+    await admin_required(request)
+    updates = {k: float(v) for k, v in req.model_dump().items() if v is not None}
+    # Clamp to a sane range
+    for k in list(updates):
+        updates[k] = max(0.0, min(50.0, updates[k]))
+    if updates:
+        await db.platform_settings.update_one({"_id": "global"}, {"$set": updates}, upsert=True)
+    return await get_settings()
+
+
+# ---- Verifications ----
+@api.get("/admin/verifications")
+async def admin_verifications(request: Request, status: Optional[str] = None, kind: Optional[str] = None):
+    await admin_required(request)
+    q: Dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    if kind:
+        q["kind"] = kind
+    items = await db.verifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api.post("/admin/verifications/{verification_id}/approve")
+async def admin_approve_verification(verification_id: str, req: VerificationDecisionReq, request: Request):
+    admin = await admin_required(request)
+    v = await db.verifications.find_one({"verification_id": verification_id}, {"_id": 0})
+    if not v:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.verifications.update_one(
+        {"verification_id": verification_id},
+        {"$set": {"status": "approved", "reviewed_by": admin["user_id"], "review_note": req.note, "reviewed_at": iso(now_utc())}},
+    )
+    target_user = v.get("user_id")
+    if target_user:
+        if v.get("kind") == "brand":
+            await db.brand_profiles.update_one({"user_id": target_user}, {"$set": {"verified": True}})
+        else:
+            await db.creator_profiles.update_one({"user_id": target_user}, {"$set": {"verified": True}})
+        await db.users.update_one({"user_id": target_user}, {"$set": {"verified": True}})
+        await db.notifications.insert_one({
+            "notif_id": new_id("notif"), "user_id": target_user, "type": "verification",
+            "message": "Your account has been verified", "read": False, "created_at": iso(now_utc()),
+        })
+    return {"ok": True}
+
+
+@api.post("/admin/verifications/{verification_id}/reject")
+async def admin_reject_verification(verification_id: str, req: VerificationDecisionReq, request: Request):
+    admin = await admin_required(request)
+    v = await db.verifications.find_one({"verification_id": verification_id}, {"_id": 0})
+    if not v:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.verifications.update_one(
+        {"verification_id": verification_id},
+        {"$set": {"status": "rejected", "reviewed_by": admin["user_id"], "review_note": req.note, "reviewed_at": iso(now_utc())}},
+    )
+    if v.get("user_id"):
+        await db.notifications.insert_one({
+            "notif_id": new_id("notif"), "user_id": v["user_id"], "type": "verification",
+            "message": f"Your verification was not approved. {req.note or ''}".strip(), "read": False, "created_at": iso(now_utc()),
+        })
+    return {"ok": True}
+
+
+# ---- Reports ----
+@api.post("/reports")
+async def create_report(req: ReportReq, request: Request):
+    user = await optional_user(request)
+    doc = {
+        "report_id": new_id("rep"),
+        **req.model_dump(),
+        "status": "open",
+        "reported_by": (user or {}).get("user_id", "system"),
+        "reported_by_name": (user or {}).get("name", "System Auto-detect"),
+        "created_at": iso(now_utc()),
+    }
+    await db.reports.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/admin/reports")
+async def admin_reports(request: Request, status: Optional[str] = None):
+    await admin_required(request)
+    q: Dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    return await db.reports.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api.post("/admin/reports/{report_id}/resolve")
+async def admin_resolve_report(report_id: str, request: Request):
+    admin = await admin_required(request)
+    await db.reports.update_one(
+        {"report_id": report_id},
+        {"$set": {"status": "resolved", "resolved_by": admin["user_id"], "resolved_at": iso(now_utc())}},
+    )
+    return {"ok": True}
+
+
+class VerificationRequestReq(BaseModel):
+    documents: Optional[List[str]] = []
+    note: Optional[str] = ""
+
+
+@api.post("/verifications/request")
+async def request_verification(req: VerificationRequestReq, request: Request):
+    """A creator or brand submits themselves for verification review."""
+    user = await auth_required(request)
+    kind = "brand" if user.get("role") == "brand" else "creator"
+    existing = await db.verifications.find_one({"user_id": user["user_id"], "status": "pending"}, {"_id": 0})
+    if existing:
+        return {"ok": True, "already_pending": True}
+    category = ""
+    handle = ""
+    followers = 0
+    if kind == "creator":
+        prof = await db.creator_profiles.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+        category = prof.get("category", "")
+        handle = prof.get("instagram") or prof.get("youtube") or ""
+        followers = (prof.get("followers_instagram") or 0) + (prof.get("followers_youtube") or 0)
+    else:
+        prof = await db.brand_profiles.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+        category = prof.get("industry", "")
+    doc = {
+        "verification_id": new_id("ver"),
+        "user_id": user["user_id"],
+        "name": user["name"],
+        "email": user["email"],
+        "photo": user.get("picture", ""),
+        "kind": kind,
+        "category": category,
+        "handle": handle,
+        "followers": followers,
+        "documents": req.documents or [],
+        "note": req.note,
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    }
+    await db.verifications.insert_one(doc)
+    doc.pop("_id", None)
+    return {"ok": True, "verification": doc}
 
 
 # =================== Creator Profiles ===================
@@ -388,6 +628,7 @@ async def list_creators(
     creator_type: Optional[str] = None,
     sort_by: Optional[str] = "performance",
     limit: int = 60,
+    request: Request = None,
 ):
     query: Dict[str, Any] = {}
     if q:
@@ -409,6 +650,11 @@ async def list_creators(
 
     creators = await db.creator_profiles.find(query, {"_id": 0}).to_list(500)
 
+    # Role-aware hidden markup on creator rates
+    viewer = await optional_user(request) if request else None
+    settings = await get_settings()
+    pct = markup_for_role((viewer or {}).get("role"), settings)
+
     # Post filters
     def total_followers(c):
         return (c.get("followers_instagram") or 0) + (c.get("followers_youtube") or 0)
@@ -420,6 +666,8 @@ async def list_creators(
 
     out = []
     for c in creators:
+        if pct:
+            c["rate_card"] = transform_rate_card(c.get("rate_card"), pct)
         tf = total_followers(c)
         if min_followers is not None and tf < min_followers:
             continue
@@ -448,11 +696,18 @@ async def list_creators(
 
 
 @api.get("/creators/{user_id}")
-async def get_creator(user_id: str):
+async def get_creator(user_id: str, request: Request = None):
     c = await db.creator_profiles.find_one({"user_id": user_id}, {"_id": 0})
     if not c:
         raise HTTPException(status_code=404, detail="Creator not found")
     await db.creator_profiles.update_one({"user_id": user_id}, {"$inc": {"profile_views": 1}})
+    # Apply hidden markup unless the viewer is the creator themselves or an admin
+    viewer = await optional_user(request) if request else None
+    if not viewer or (viewer.get("user_id") != user_id and viewer.get("role") != "admin"):
+        settings = await get_settings()
+        pct = markup_for_role((viewer or {}).get("role"), settings)
+        if pct:
+            c["rate_card"] = transform_rate_card(c.get("rate_card"), pct)
     return c
 
 
@@ -506,25 +761,37 @@ async def post_campaign(req: CampaignReq, request: Request):
 @api.get("/campaigns")
 async def list_campaigns(category: Optional[str] = None, platform: Optional[str] = None, mine: Optional[bool] = False, request: Request = None):
     query: Dict[str, Any] = {}
-    if mine and request:
-        try:
-            user = await auth_required(request)
-            query["brand_user_id"] = user["user_id"]
-        except HTTPException:
-            pass
+    viewer = await optional_user(request) if request else None
+    if mine and viewer:
+        query["brand_user_id"] = viewer["user_id"]
     if category:
         query["categories"] = category
     if platform:
         query["platforms"] = platform
     items = await db.campaigns.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Creators/agencies see budgets net of the hidden platform deduction
+    settings = await get_settings()
+    ded = deduction_for_role((viewer or {}).get("role"), settings)
+    if ded:
+        for it in items:
+            if it.get("brand_user_id") != (viewer or {}).get("user_id"):
+                it["budget_min"] = _apply_pct(it.get("budget_min"), ded, -1)
+                it["budget_max"] = _apply_pct(it.get("budget_max"), ded, -1)
     return items
 
 
 @api.get("/campaigns/{campaign_id}")
-async def get_campaign(campaign_id: str):
+async def get_campaign(campaign_id: str, request: Request = None):
     c = await db.campaigns.find_one({"campaign_id": campaign_id}, {"_id": 0})
     if not c:
         raise HTTPException(status_code=404, detail="Not found")
+    viewer = await optional_user(request) if request else None
+    if not viewer or (c.get("brand_user_id") != viewer.get("user_id") and viewer.get("role") != "admin"):
+        settings = await get_settings()
+        ded = deduction_for_role((viewer or {}).get("role"), settings)
+        if ded:
+            c["budget_min"] = _apply_pct(c.get("budget_min"), ded, -1)
+            c["budget_max"] = _apply_pct(c.get("budget_max"), ded, -1)
     return c
 
 
