@@ -53,10 +53,10 @@ function Hero() {
           </span>
         </motion.div>
 
-        <motion.h1 initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{duration:0.7, delay:0.1}} className="font-display text-5xl sm:text-7xl md:text-8xl mt-8 tracking-tighter leading-[0.95]">
+        <motion.h1 initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{duration:0.7, delay:0.1}} className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-7xl mt-8 tracking-tighter leading-[1] whitespace-nowrap">
           India's Most Transparent
         </motion.h1>
-        <motion.h1 initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{duration:0.7, delay:0.2}} className="font-display text-5xl sm:text-7xl md:text-8xl mt-3 tracking-tighter leading-[0.95]">
+        <motion.h1 initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{duration:0.7, delay:0.2}} className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-7xl mt-3 tracking-tighter leading-[1] whitespace-nowrap">
           <span className="bg-gradient-to-r from-[#9D7CFF] via-[#B19CFF] to-[#7C5CFF] bg-clip-text text-transparent">Influencer Marketplace</span>
         </motion.h1>
 
