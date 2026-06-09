@@ -1,56 +1,69 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import React from "react";
+import "./App.css";
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
+import { Toaster } from "sonner";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import Layout from "./components/Layout";
+import Landing from "./pages/Landing";
+import Login from "./pages/Login";
+import Signup from "./pages/Signup";
+import AuthCallback from "./pages/AuthCallback";
+import Onboarding from "./pages/Onboarding";
+import Explore from "./pages/Explore";
+import CreatorProfile from "./pages/CreatorProfile";
+import Dashboard from "./pages/Dashboard";
+import Campaigns from "./pages/Campaigns";
+import CampaignDetail from "./pages/CampaignDetail";
+import Collabs from "./pages/Collabs";
+import Leaderboard from "./pages/Leaderboard";
+import Notifications from "./pages/Notifications";
+import Settings from "./pages/Settings";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+function ProtectedRoute({ children, requireOnboarded = false }) {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center text-[#525252]">Loading...</div>;
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  if (requireOnboarded && !user.onboarded) return <Navigate to="/onboarding" replace />;
+  return children;
+}
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
+function AppRouter() {
+  const location = useLocation();
+  // CRITICAL: Detect session_id synchronously during render (not in useEffect)
+  if (location.hash?.includes("session_id=")) {
+    return <AuthCallback />;
+  }
   return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
+    <Routes>
+      <Route path="/" element={<Layout><Landing /></Layout>} />
+      <Route path="/login" element={<Layout><Login /></Layout>} />
+      <Route path="/signup" element={<Layout><Signup /></Layout>} />
+      <Route path="/onboarding" element={<ProtectedRoute><Layout><Onboarding /></Layout></ProtectedRoute>} />
+      <Route path="/explore" element={<Layout><Explore /></Layout>} />
+      <Route path="/creator/:id" element={<Layout><CreatorProfile /></Layout>} />
+      <Route path="/dashboard" element={<ProtectedRoute requireOnboarded><Layout><Dashboard /></Layout></ProtectedRoute>} />
+      <Route path="/campaigns" element={<Layout><Campaigns /></Layout>} />
+      <Route path="/campaigns/:id" element={<Layout><CampaignDetail /></Layout>} />
+      <Route path="/collabs" element={<ProtectedRoute><Layout><Collabs /></Layout></ProtectedRoute>} />
+      <Route path="/leaderboard" element={<Layout><Leaderboard /></Layout>} />
+      <Route path="/notifications" element={<ProtectedRoute><Layout><Notifications /></Layout></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
-};
+}
 
-function App() {
+export default function App() {
   return (
     <div className="App">
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
+        <AuthProvider>
+          <AppRouter />
+          <Toaster position="top-right" richColors />
+        </AuthProvider>
       </BrowserRouter>
     </div>
   );
 }
-
-export default App;

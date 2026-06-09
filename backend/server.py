@@ -1,88 +1,648 @@
-from fastapi import FastAPI, APIRouter
+"""Ybex - India's Most Transparent Influencer Marketplace - Backend API"""
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
-from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
 import uuid
-from datetime import datetime, timezone
-
+import jwt
+import bcrypt
+import httpx
+from pathlib import Path
+from pydantic import BaseModel, Field, EmailStr
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone, timedelta
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
+JWT_SECRET = os.environ.get('JWT_SECRET', 'dev-secret')
+JWT_ALG = 'HS256'
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+app = FastAPI(title="Ybex API")
+api = APIRouter(prefix="/api")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+# =================== Helpers ===================
+def now_utc():
+    return datetime.now(timezone.utc)
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+def iso(dt: datetime) -> str:
+    return dt.isoformat()
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+def new_id(prefix: str = "id") -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+def create_jwt(user_id: str) -> str:
+    payload = {"user_id": user_id, "exp": now_utc() + timedelta(days=7)}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+def hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode(), hashed.encode())
+    except Exception:
+        return False
+
+
+async def get_user_from_token(token: str) -> Optional[dict]:
+    """Resolve a user from either JWT or session_token."""
+    if not token:
+        return None
+    # Try JWT
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        uid = payload.get("user_id")
+        if uid:
+            user = await db.users.find_one({"user_id": uid}, {"_id": 0, "password_hash": 0})
+            if user:
+                return user
+    except Exception:
+        pass
+    # Try session_token (Emergent OAuth)
+    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if sess:
+        expires_at = sess.get("expires_at")
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at)
+        if expires_at and (expires_at.tzinfo is None):
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at and expires_at < now_utc():
+            return None
+        user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0, "password_hash": 0})
+        return user
+    return None
+
+
+async def auth_required(request: Request) -> dict:
+    # Try cookie first
+    token = request.cookies.get("session_token")
+    if not token:
+        ah = request.headers.get("Authorization") or ""
+        if ah.startswith("Bearer "):
+            token = ah[7:]
+    user = await get_user_from_token(token) if token else None
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+# =================== Models ===================
+class SignupReq(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+
+class LoginReq(BaseModel):
+    email: EmailStr
+    password: str
+
+class RoleUpdateReq(BaseModel):
+    role: str  # creator | brand | talent_manager
+
+class CreatorProfileReq(BaseModel):
+    bio: Optional[str] = ""
+    category: Optional[str] = ""
+    sub_categories: Optional[List[str]] = []
+    city: Optional[str] = ""
+    state: Optional[str] = ""
+    languages: Optional[List[str]] = []
+    gender: Optional[str] = ""
+    instagram: Optional[str] = ""
+    youtube: Optional[str] = ""
+    twitter: Optional[str] = ""
+    linkedin: Optional[str] = ""
+    followers_instagram: Optional[int] = 0
+    followers_youtube: Optional[int] = 0
+    rate_card: Optional[Dict[str, int]] = {}  # {"reel": 5000, "story": 2000, "yt_video": 25000}
+    barter: Optional[str] = "cash_only"  # cash_only | barter_ok | partial_barter
+    payment_terms: Optional[str] = "within_30_days"
+    portfolio: Optional[List[str]] = []
+    past_brands: Optional[List[str]] = []
+    photo: Optional[str] = ""
+    creator_type: Optional[str] = "influencer"
+    work_mode: Optional[str] = "active"
+
+class BrandProfileReq(BaseModel):
+    company_name: str
+    industry: str
+    team_size: Optional[str] = ""
+    website: Optional[str] = ""
+    description: Optional[str] = ""
+    logo: Optional[str] = ""
+
+class CampaignReq(BaseModel):
+    title: str
+    description: str
+    budget_min: int
+    budget_max: int
+    deliverables: List[str]
+    categories: List[str]
+    platforms: List[str]
+    deadline: Optional[str] = ""
+    language: Optional[str] = "Hindi"
+
+class CollabReq(BaseModel):
+    creator_id: str
+    deliverable: str
+    proposed_amount: int
+    message: str
+
+class WaveReq(BaseModel):
+    creator_id: str
+    message: Optional[str] = ""
+
+class CampaignApplyReq(BaseModel):
+    campaign_id: str
+    proposed_amount: int
+    pitch: str
+
+
+# =================== Auth Endpoints ===================
+@api.post("/auth/signup")
+async def signup(req: SignupReq, response: Response):
+    existing = await db.users.find_one({"email": req.email.lower()}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user_id = new_id("user")
+    user = {
+        "user_id": user_id,
+        "email": req.email.lower(),
+        "name": req.name,
+        "password_hash": hash_password(req.password),
+        "role": None,
+        "picture": "",
+        "auth_method": "email",
+        "created_at": iso(now_utc()),
+        "onboarded": False,
+    }
+    await db.users.insert_one(user)
+    token = create_jwt(user_id)
+    response.set_cookie("session_token", token, httponly=True, secure=True, samesite="none", max_age=7*24*3600, path="/")
+    safe_user = {k: v for k, v in user.items() if k not in ("password_hash", "_id")}
+    return {"token": token, "user": safe_user}
+
+
+@api.post("/auth/login")
+async def login(req: LoginReq, response: Response):
+    user = await db.users.find_one({"email": req.email.lower()})
+    if not user or not user.get("password_hash") or not verify_password(req.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = create_jwt(user["user_id"])
+    response.set_cookie("session_token", token, httponly=True, secure=True, samesite="none", max_age=7*24*3600, path="/")
+    user.pop("_id", None)
+    user.pop("password_hash", None)
+    return {"token": token, "user": user}
+
+
+@api.post("/auth/session")
+async def process_session(request: Request, response: Response):
+    """Exchange Emergent OAuth session_id for a session_token."""
+    body = await request.json()
+    session_id = body.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    # REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+    async with httpx.AsyncClient(timeout=10) as hc:
+        r = await hc.get(
+            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+            headers={"X-Session-ID": session_id},
+        )
+        if r.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid session_id")
+        data = r.json()
+
+    email = data["email"].lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        user_id = existing["user_id"]
+        await db.users.update_one({"user_id": user_id}, {"$set": {"picture": data.get("picture", existing.get("picture", ""))}})
+    else:
+        user_id = new_id("user")
+        await db.users.insert_one({
+            "user_id": user_id,
+            "email": email,
+            "name": data.get("name", ""),
+            "picture": data.get("picture", ""),
+            "role": None,
+            "auth_method": "google",
+            "created_at": iso(now_utc()),
+            "onboarded": False,
+        })
+
+    session_token = data["session_token"]
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": iso(now_utc() + timedelta(days=7)),
+        "created_at": iso(now_utc()),
+    })
+    response.set_cookie("session_token", session_token, httponly=True, secure=True, samesite="none", max_age=7*24*3600, path="/")
+    user = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
+    return {"user": user}
+
+
+@api.get("/auth/me")
+async def me(request: Request):
+    user = await auth_required(request)
+    return user
+
+
+@api.post("/auth/logout")
+async def logout(request: Request, response: Response):
+    token = request.cookies.get("session_token")
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
+    response.delete_cookie("session_token", path="/")
+    return {"ok": True}
+
+
+@api.post("/auth/role")
+async def set_role(req: RoleUpdateReq, request: Request):
+    user = await auth_required(request)
+    if req.role not in ["creator", "brand", "talent_manager"]:
+        raise HTTPException(status_code=400, detail="Invalid role")
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"role": req.role}})
+    return {"ok": True, "role": req.role}
+
+
+# =================== Creator Profiles ===================
+def compute_engagement_score(profile: dict) -> dict:
+    """Mock AI-based scoring."""
+    followers = profile.get("followers_instagram", 0) + profile.get("followers_youtube", 0)
+    # Deterministic pseudo-random based on user_id
+    seed = sum(ord(c) for c in profile.get("user_id", "x"))
+    er = round(3.5 + (seed % 70) / 10, 2)  # 3.5% - 10.5%
+    fake_pct = round((seed % 15) + 2, 1)  # 2-17%
+    avg_views = max(1000, int(followers * (er / 100) * 0.7))
+    perf_score = max(50, min(99, int(70 + (seed % 30) - fake_pct)))
+    return {
+        "engagement_rate": er,
+        "fake_follower_pct": fake_pct,
+        "avg_views_30d": avg_views,
+        "performance_score": perf_score,
+    }
+
+
+@api.post("/creators/profile")
+async def upsert_creator_profile(req: CreatorProfileReq, request: Request):
+    user = await auth_required(request)
+    data = req.model_dump()
+    data["user_id"] = user["user_id"]
+    data["name"] = user["name"]
+    data["email"] = user["email"]
+    data["picture"] = data.get("photo") or user.get("picture", "")
+    data["updated_at"] = iso(now_utc())
+    data.update(compute_engagement_score({**data, "user_id": user["user_id"]}))
+    await db.creator_profiles.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": data, "$setOnInsert": {"created_at": iso(now_utc()), "profile_views": 0}},
+        upsert=True,
+    )
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"onboarded": True}})
+    return {"ok": True}
+
+
+@api.get("/creators")
+async def list_creators(
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    city: Optional[str] = None,
+    platform: Optional[str] = None,
+    min_followers: Optional[int] = None,
+    max_followers: Optional[int] = None,
+    max_budget: Optional[int] = None,
+    min_engagement: Optional[float] = None,
+    language: Optional[str] = None,
+    gender: Optional[str] = None,
+    barter: Optional[str] = None,
+    creator_type: Optional[str] = None,
+    sort_by: Optional[str] = "performance",
+    limit: int = 60,
+):
+    query: Dict[str, Any] = {}
+    if q:
+        query["name"] = {"$regex": q, "$options": "i"}
+    if category:
+        query["category"] = category
+    if city:
+        query["city"] = city
+    if language:
+        query["languages"] = language
+    if gender:
+        query["gender"] = gender
+    if barter:
+        query["barter"] = barter
+    if creator_type:
+        query["creator_type"] = creator_type
+    if min_engagement is not None:
+        query["engagement_rate"] = {"$gte": min_engagement}
+
+    creators = await db.creator_profiles.find(query, {"_id": 0}).to_list(500)
+
+    # Post filters
+    def total_followers(c):
+        return (c.get("followers_instagram") or 0) + (c.get("followers_youtube") or 0)
+
+    def min_rate(c):
+        rc = c.get("rate_card") or {}
+        vals = [v for v in rc.values() if isinstance(v, (int, float))]
+        return min(vals) if vals else 0
+
+    out = []
+    for c in creators:
+        tf = total_followers(c)
+        if min_followers is not None and tf < min_followers:
+            continue
+        if max_followers is not None and tf > max_followers:
+            continue
+        if max_budget is not None and min_rate(c) > max_budget:
+            continue
+        if platform == "instagram" and not c.get("instagram"):
+            continue
+        if platform == "youtube" and not c.get("youtube"):
+            continue
+        c["total_followers"] = tf
+        c["min_rate"] = min_rate(c)
+        out.append(c)
+
+    if sort_by == "followers":
+        out.sort(key=lambda x: x.get("total_followers", 0), reverse=True)
+    elif sort_by == "engagement":
+        out.sort(key=lambda x: x.get("engagement_rate", 0), reverse=True)
+    elif sort_by == "budget":
+        out.sort(key=lambda x: x.get("min_rate", 999999))
+    else:
+        out.sort(key=lambda x: x.get("performance_score", 0), reverse=True)
+
+    return out[:limit]
+
+
+@api.get("/creators/{user_id}")
+async def get_creator(user_id: str):
+    c = await db.creator_profiles.find_one({"user_id": user_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Creator not found")
+    await db.creator_profiles.update_one({"user_id": user_id}, {"$inc": {"profile_views": 1}})
+    return c
+
+
+# =================== Brand Profiles ===================
+@api.post("/brands/profile")
+async def upsert_brand_profile(req: BrandProfileReq, request: Request):
+    user = await auth_required(request)
+    data = req.model_dump()
+    data["user_id"] = user["user_id"]
+    data["email"] = user["email"]
+    data["updated_at"] = iso(now_utc())
+    await db.brand_profiles.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": data, "$setOnInsert": {"created_at": iso(now_utc()), "verified": False}},
+        upsert=True,
+    )
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"onboarded": True}})
+    return {"ok": True}
+
+
+@api.get("/brands/me")
+async def my_brand(request: Request):
+    user = await auth_required(request)
+    b = await db.brand_profiles.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return b or {}
+
+
+# =================== Campaigns ===================
+@api.post("/campaigns")
+async def post_campaign(req: CampaignReq, request: Request):
+    user = await auth_required(request)
+    if user.get("role") != "brand":
+        raise HTTPException(status_code=403, detail="Only brands can post campaigns")
+    brand = await db.brand_profiles.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    cid = new_id("camp")
+    doc = {
+        "campaign_id": cid,
+        "brand_user_id": user["user_id"],
+        "brand_name": brand.get("company_name", user["name"]) if brand else user["name"],
+        "brand_logo": brand.get("logo", "") if brand else "",
+        **req.model_dump(),
+        "status": "live",
+        "applicants": [],
+        "created_at": iso(now_utc()),
+    }
+    await db.campaigns.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/campaigns")
+async def list_campaigns(category: Optional[str] = None, platform: Optional[str] = None, mine: Optional[bool] = False, request: Request = None):
+    query: Dict[str, Any] = {}
+    if mine and request:
+        try:
+            user = await auth_required(request)
+            query["brand_user_id"] = user["user_id"]
+        except HTTPException:
+            pass
+    if category:
+        query["categories"] = category
+    if platform:
+        query["platforms"] = platform
+    items = await db.campaigns.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+
+@api.get("/campaigns/{campaign_id}")
+async def get_campaign(campaign_id: str):
+    c = await db.campaigns.find_one({"campaign_id": campaign_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Not found")
+    return c
+
+
+@api.post("/campaigns/apply")
+async def apply_campaign(req: CampaignApplyReq, request: Request):
+    user = await auth_required(request)
+    if user.get("role") != "creator":
+        raise HTTPException(status_code=403, detail="Only creators can apply")
+    camp = await db.campaigns.find_one({"campaign_id": req.campaign_id})
+    if not camp:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    application = {
+        "application_id": new_id("app"),
+        "creator_user_id": user["user_id"],
+        "creator_name": user["name"],
+        "proposed_amount": req.proposed_amount,
+        "pitch": req.pitch,
+        "status": "pending",
+        "applied_at": iso(now_utc()),
+    }
+    await db.campaigns.update_one({"campaign_id": req.campaign_id}, {"$push": {"applicants": application}})
+    await db.notifications.insert_one({
+        "notif_id": new_id("notif"),
+        "user_id": camp["brand_user_id"],
+        "type": "campaign_application",
+        "message": f"{user['name']} applied to '{camp['title']}'",
+        "read": False,
+        "created_at": iso(now_utc()),
+    })
+    return {"ok": True}
+
+
+# =================== Collabs / Waves ===================
+@api.post("/collabs/wave")
+async def wave(req: WaveReq, request: Request):
+    user = await auth_required(request)
+    wid = new_id("wave")
+    await db.waves.insert_one({
+        "wave_id": wid,
+        "from_user_id": user["user_id"],
+        "from_name": user["name"],
+        "to_user_id": req.creator_id,
+        "message": req.message,
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    })
+    await db.notifications.insert_one({
+        "notif_id": new_id("notif"),
+        "user_id": req.creator_id,
+        "type": "wave",
+        "message": f"{user['name']} waved at you",
+        "read": False,
+        "created_at": iso(now_utc()),
+    })
+    return {"ok": True}
+
+
+@api.post("/collabs/request")
+async def collab_request(req: CollabReq, request: Request):
+    user = await auth_required(request)
+    cid = new_id("collab")
+    await db.collabs.insert_one({
+        "collab_id": cid,
+        "from_user_id": user["user_id"],
+        "from_name": user["name"],
+        "to_user_id": req.creator_id,
+        "deliverable": req.deliverable,
+        "proposed_amount": req.proposed_amount,
+        "message": req.message,
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    })
+    await db.notifications.insert_one({
+        "notif_id": new_id("notif"),
+        "user_id": req.creator_id,
+        "type": "collab_request",
+        "message": f"{user['name']} sent a collab request (₹{req.proposed_amount:,})",
+        "read": False,
+        "created_at": iso(now_utc()),
+    })
+    return {"ok": True}
+
+
+@api.get("/collabs")
+async def list_collabs(request: Request):
+    user = await auth_required(request)
+    sent = await db.collabs.find({"from_user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    received = await db.collabs.find({"to_user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    waves_sent = await db.waves.find({"from_user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    waves_received = await db.waves.find({"to_user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+    return {"sent": sent, "received": received, "waves_sent": waves_sent, "waves_received": waves_received}
+
+
+@api.post("/collabs/{collab_id}/action")
+async def collab_action(collab_id: str, action: str, request: Request):
+    user = await auth_required(request)
+    if action not in ["accept", "decline"]:
+        raise HTTPException(status_code=400, detail="Invalid action")
+    status = "accepted" if action == "accept" else "declined"
+    await db.collabs.update_one({"collab_id": collab_id, "to_user_id": user["user_id"]}, {"$set": {"status": status}})
+    return {"ok": True}
+
+
+# =================== Performance / Leaderboard ===================
+@api.get("/leaderboard")
+async def leaderboard(category: Optional[str] = None, city: Optional[str] = None, limit: int = 25):
+    q: Dict[str, Any] = {}
+    if category:
+        q["category"] = category
+    if city:
+        q["city"] = city
+    rows = await db.creator_profiles.find(q, {"_id": 0}).to_list(500)
+    rows.sort(key=lambda x: x.get("performance_score", 0), reverse=True)
+    return rows[:limit]
+
+
+# =================== Notifications ===================
+@api.get("/notifications")
+async def list_notifications(request: Request):
+    user = await auth_required(request)
+    items = await db.notifications.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return items
+
+
+@api.post("/notifications/read-all")
+async def mark_all_read(request: Request):
+    user = await auth_required(request)
+    await db.notifications.update_many({"user_id": user["user_id"]}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+# =================== Dashboard Stats ===================
+@api.get("/dashboard/stats")
+async def dashboard_stats(request: Request):
+    user = await auth_required(request)
+    role = user.get("role")
+    if role == "creator":
+        prof = await db.creator_profiles.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+        waves = await db.waves.count_documents({"to_user_id": user["user_id"]})
+        collabs = await db.collabs.count_documents({"to_user_id": user["user_id"]})
+        return {
+            "profile_views": prof.get("profile_views", 0),
+            "waves": waves,
+            "collab_requests": collabs,
+            "performance_score": prof.get("performance_score", 0),
+            "engagement_rate": prof.get("engagement_rate", 0),
+        }
+    else:
+        campaigns = await db.campaigns.count_documents({"brand_user_id": user["user_id"]})
+        sent_collabs = await db.collabs.count_documents({"from_user_id": user["user_id"]})
+        sent_waves = await db.waves.count_documents({"from_user_id": user["user_id"]})
+        return {
+            "campaigns": campaigns,
+            "collabs_sent": sent_collabs,
+            "waves_sent": sent_waves,
+            "connections": sent_collabs,
+        }
+
+
+# =================== Health ===================
+@api.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"app": "Ybex", "status": "running"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
-app.include_router(api_router)
+app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
