@@ -280,7 +280,7 @@ function FinalCTA() {
           <p className="mt-5 text-white/60 max-w-xl mx-auto">Public rate cards. Verified data. Performance-tracked ROI. Built for serious creators and serious brands.</p>
           <div className="mt-10 flex flex-wrap gap-3 justify-center">
             <Link to="/signup?role=creator" data-testid="final-creator-cta" className="btn-secondary">I'm a Creator</Link>
-            <Link to="/signup?role=brand" data-testid="final-brand-cta" className="btn-primary">Get Started Free <ArrowRight size={16}/></Link>
+            <Link to="/signup?role=brand" data-testid="final-brand-cta" className="btn-primary">I'm a Brand <ArrowRight size={16}/></Link>
           </div>
         </div>
       </div>
