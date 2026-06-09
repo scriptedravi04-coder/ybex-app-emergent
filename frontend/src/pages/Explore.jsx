@@ -33,11 +33,11 @@ export default function Explore() {
   return (
     <div className="max-w-7xl mx-auto px-6 md:px-12 py-12" data-testid="explore-page">
       <h1 className="font-display text-5xl tracking-tight">Discover Bharat creators</h1>
-      <p className="text-[#525252] mt-2">{creators.length} creators · transparent rate cards · verified engagement</p>
+      <p className="text-white/70 mt-2">{creators.length} creators · transparent rate cards · verified engagement</p>
 
       <div className="mt-8 flex gap-3 items-center">
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A3A3A3]" size={18}/>
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={18}/>
           <input data-testid="search-input" value={q} onChange={(e)=>setQ(e.target.value)} className="input-field pl-10" placeholder="Search creators by name..."/>
         </div>
         <select data-testid="sort-select" value={filters.sort_by} onChange={(e)=>setFilters({...filters, sort_by:e.target.value})} className="input-field max-w-[200px]">
@@ -50,7 +50,7 @@ export default function Explore() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-8">
         {/* Filters sidebar */}
-        <aside className="md:col-span-1 bg-white border border-[#E5E5E5] rounded-2xl p-5 h-fit sticky top-20" data-testid="filters-panel">
+        <aside className="md:col-span-1 bg-[#13131B] border border-white/10 rounded-2xl p-5 h-fit sticky top-20" data-testid="filters-panel">
           <div className="flex items-center gap-2 mb-4"><SlidersHorizontal size={16}/><h2 className="font-display text-xl">Filters</h2></div>
 
           <FilterSection label="Category">
@@ -87,15 +87,15 @@ export default function Explore() {
             <select data-testid="filter-type" value={filters.creator_type} onChange={(e)=>setFilters({...filters, creator_type:e.target.value})} className="input-field text-sm"><option value="">All</option><option value="influencer">Influencer</option><option value="celebrity">Celebrity</option><option value="publisher">Publisher</option></select>
           </FilterSection>
 
-          <button onClick={()=>setFilters({category:"",city:"",platform:"",language:"",gender:"",barter:"",creator_type:"",min_followers:"",max_followers:"",max_budget:"",min_engagement:"",sort_by:"performance"})} data-testid="clear-filters" className="w-full mt-4 text-sm text-[#E84A27] font-semibold hover:underline">Clear filters</button>
+          <button onClick={()=>setFilters({category:"",city:"",platform:"",language:"",gender:"",barter:"",creator_type:"",min_followers:"",max_followers:"",max_budget:"",min_engagement:"",sort_by:"performance"})} data-testid="clear-filters" className="w-full mt-4 text-sm text-[#9D7CFF] font-semibold hover:underline">Clear filters</button>
         </aside>
 
         {/* Results */}
         <section className="md:col-span-3" data-testid="creators-grid">
           {loading ? (
-            <div className="text-[#525252]">Loading creators...</div>
+            <div className="text-white/70">Loading creators...</div>
           ) : creators.length === 0 ? (
-            <div className="bg-white border border-[#E5E5E5] rounded-2xl p-12 text-center text-[#525252]">No creators match your filters.</div>
+            <div className="bg-[#13131B] border border-white/10 rounded-2xl p-12 text-center text-white/70">No creators match your filters.</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {creators.map((c, i) => <CreatorCard key={c.user_id} c={c} index={i}/>)}
@@ -109,7 +109,7 @@ export default function Explore() {
 
 function FilterSection({ label, children }) {
   return (
-    <div className="mb-4 pb-4 border-b border-[#E5E5E5] last:border-0">
+    <div className="mb-4 pb-4 border-b border-white/10 last:border-0">
       <div className="label-mini mb-2">{label}</div>
       {children}
     </div>

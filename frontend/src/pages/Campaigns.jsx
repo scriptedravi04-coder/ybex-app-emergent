@@ -54,7 +54,7 @@ export default function Campaigns() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="font-display text-5xl tracking-tight">Campaign Marketplace</h1>
-          <p className="text-[#525252] mt-2">{campaigns.length} live campaigns · apply with your rate</p>
+          <p className="text-white/70 mt-2">{campaigns.length} live campaigns · apply with your rate</p>
         </div>
         {user?.role === "brand" && (
           <button onClick={()=>setShowNew(true)} data-testid="new-campaign-btn" className="btn-primary"><Plus size={18}/> Post Campaign</button>
@@ -68,30 +68,30 @@ export default function Campaigns() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {campaigns.map((c) => (
-          <Link to={`/campaigns/${c.campaign_id}`} key={c.campaign_id} className="bg-white border border-[#E5E5E5] rounded-2xl p-6 hover:border-[#E84A27] hover:-translate-y-1 transition-all" data-testid={`campaign-card-${c.campaign_id}`}>
+          <Link to={`/campaigns/${c.campaign_id}`} key={c.campaign_id} className="bg-[#13131B] border border-white/10 rounded-2xl p-6 hover:border-[#7C5CFF] hover:-translate-y-1 transition-all" data-testid={`campaign-card-${c.campaign_id}`}>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs px-2 py-1 bg-[#1A4331]/10 text-[#1A4331] rounded-full font-semibold">LIVE</span>
-              <span className="text-xs text-[#A3A3A3]">{(c.applicants||[]).length} applicants</span>
+              <span className="text-xs px-2 py-1 bg-emerald-600/10 text-emerald-400 rounded-full font-semibold">LIVE</span>
+              <span className="text-xs text-white/40">{(c.applicants||[]).length} applicants</span>
             </div>
             <h3 className="font-display text-2xl">{c.title}</h3>
-            <p className="text-sm text-[#525252] mt-2 line-clamp-2">{c.description}</p>
-            <div className="mt-4 border-t border-[#E5E5E5] pt-3">
+            <p className="text-sm text-white/70 mt-2 line-clamp-2">{c.description}</p>
+            <div className="mt-4 border-t border-white/10 pt-3">
               <div className="label-mini">Budget</div>
               <div className="font-display text-2xl">₹{(c.budget_min||0).toLocaleString("en-IN")} - ₹{(c.budget_max||0).toLocaleString("en-IN")}</div>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5">
-              {(c.categories||[]).slice(0,3).map(cat => <span key={cat} className="text-xs px-2 py-0.5 rounded-full border border-[#E5E5E5] text-[#525252]">{cat}</span>)}
+              {(c.categories||[]).slice(0,3).map(cat => <span key={cat} className="text-xs px-2 py-0.5 rounded-full border border-white/10 text-white/70">{cat}</span>)}
             </div>
-            <div className="text-xs text-[#A3A3A3] mt-3">by {c.brand_name}</div>
+            <div className="text-xs text-white/40 mt-3">by {c.brand_name}</div>
           </Link>
         ))}
-        {campaigns.length === 0 && <div className="md:col-span-3 text-center text-[#A3A3A3] py-12">No campaigns yet</div>}
+        {campaigns.length === 0 && <div className="md:col-span-3 text-center text-white/40 py-12">No campaigns yet</div>}
       </div>
 
       {/* New Campaign Modal */}
       {showNew && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={()=>{setShowNew(false); setParams({});}}>
-          <div onClick={(e)=>e.stopPropagation()} className="bg-white rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto scroll-thin" data-testid="new-campaign-modal">
+          <div onClick={(e)=>e.stopPropagation()} className="bg-[#13131B] rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto scroll-thin" data-testid="new-campaign-modal">
             <div className="flex items-center justify-between mb-6">
               <h2 className="font-display text-3xl">Post a campaign</h2>
               <button onClick={()=>{setShowNew(false); setParams({});}}><X/></button>
@@ -105,15 +105,15 @@ export default function Campaigns() {
               </div>
               <div>
                 <label className="label-mini block mb-2">Categories</label>
-                <div className="flex flex-wrap gap-2">{CATEGORIES.map(c => <button key={c} type="button" onClick={()=>toggle("categories", c)} className={`px-3 py-1 text-xs border rounded-full ${form.categories.includes(c) ? "bg-[#0A0A0A] text-white border-[#0A0A0A]" : "border-[#E5E5E5] text-[#525252]"}`}>{c}</button>)}</div>
+                <div className="flex flex-wrap gap-2">{CATEGORIES.map(c => <button key={c} type="button" onClick={()=>toggle("categories", c)} className={`px-3 py-1 text-xs border rounded-full ${form.categories.includes(c) ? "bg-white/10 text-white border-white/20" : "border-white/10 text-white/70"}`}>{c}</button>)}</div>
               </div>
               <div>
                 <label className="label-mini block mb-2">Platforms</label>
-                <div className="flex flex-wrap gap-2">{PLATFORMS.map(p => <button key={p} type="button" onClick={()=>toggle("platforms", p)} className={`px-3 py-1 text-xs border rounded-full ${form.platforms.includes(p) ? "bg-[#0A0A0A] text-white border-[#0A0A0A]" : "border-[#E5E5E5] text-[#525252]"}`}>{p}</button>)}</div>
+                <div className="flex flex-wrap gap-2">{PLATFORMS.map(p => <button key={p} type="button" onClick={()=>toggle("platforms", p)} className={`px-3 py-1 text-xs border rounded-full ${form.platforms.includes(p) ? "bg-white/10 text-white border-white/20" : "border-white/10 text-white/70"}`}>{p}</button>)}</div>
               </div>
               <div>
                 <label className="label-mini block mb-2">Deliverables</label>
-                <div className="flex flex-wrap gap-2">{DELIVERABLES.map(d => <button key={d} type="button" onClick={()=>toggle("deliverables", d)} className={`px-3 py-1 text-xs border rounded-full ${form.deliverables.includes(d) ? "bg-[#0A0A0A] text-white border-[#0A0A0A]" : "border-[#E5E5E5] text-[#525252]"}`}>{d}</button>)}</div>
+                <div className="flex flex-wrap gap-2">{DELIVERABLES.map(d => <button key={d} type="button" onClick={()=>toggle("deliverables", d)} className={`px-3 py-1 text-xs border rounded-full ${form.deliverables.includes(d) ? "bg-white/10 text-white border-white/20" : "border-white/10 text-white/70"}`}>{d}</button>)}</div>
               </div>
               <button onClick={submitCampaign} data-testid="camp-submit" className="btn-primary w-full">Post Campaign</button>
             </div>

@@ -19,21 +19,21 @@ export default function CreatorCard({ c, index = 0 }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.03, duration: 0.4 }}
       data-testid={`creator-card-${c.user_id}`}
-      className="bg-white border border-[#E5E5E5] rounded-2xl overflow-hidden hover:border-[#E84A27] transition-all duration-300 group"
+      className="bg-[#13131B] border border-white/10 rounded-2xl overflow-hidden hover:border-[#7C5CFF]/50 hover:shadow-[0_8px_32px_rgba(124,92,255,0.15)] transition-all duration-300 group"
     >
       <Link to={`/creator/${c.user_id}`} className="block">
-        <div className="relative aspect-[4/3] overflow-hidden bg-[#F7F5F2]">
+        <div className="relative aspect-[4/3] overflow-hidden bg-black">
           <img src={c.photo || c.picture} alt={c.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
           {c.performance_score >= 85 && (
-            <div className="absolute top-3 left-3 bg-[#1A4331] text-white text-xs font-semibold px-2 py-1 rounded-full flex items-center gap-1">
-              <TrendingUp size={11}/> Top {Math.max(1, 100 - (c.performance_score || 0))}%
+            <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1 bg-gradient-to-r from-[#7C5CFF] to-[#5B3EE0] text-white shadow-lg">
+              <TrendingUp size={10}/> Top {Math.max(1, 100 - (c.performance_score || 0))}%
             </div>
           )}
-          <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur px-2 py-1 rounded-full text-xs font-mono">
+          <div className="absolute bottom-3 right-3 bg-black/70 backdrop-blur px-2 py-1 rounded-full text-[11px] font-mono text-white">
             {c.engagement_rate}% ER
           </div>
         </div>
@@ -41,33 +41,33 @@ export default function CreatorCard({ c, index = 0 }) {
         <div className="p-4">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h3 className="font-display text-lg leading-tight">{c.name}</h3>
-              <p className="text-xs text-[#525252] flex items-center gap-1 mt-0.5">
+              <h3 className="font-semibold text-base leading-tight">{c.name}</h3>
+              <p className="text-xs text-white/50 flex items-center gap-1 mt-0.5">
                 <MapPin size={11}/> {c.city}, {c.state}
               </p>
             </div>
-            <CheckCircle2 size={16} className="text-[#1A4331] flex-shrink-0" />
+            <CheckCircle2 size={16} className="text-[#9D7CFF] flex-shrink-0" />
           </div>
 
           <div className="mt-3 flex flex-wrap gap-1.5">
-            <span className="text-xs px-2 py-0.5 rounded-full border border-[#E5E5E5] text-[#525252]">{c.category}</span>
-            {(c.languages || []).slice(0, 2).map((l) => (
-              <span key={l} className="text-xs px-2 py-0.5 rounded-full border border-[#E5E5E5] text-[#525252]">{l}</span>
+            <span className="pill pill-violet" style={{padding:"0.25rem 0.625rem", fontSize:"0.7rem"}}>{c.category}</span>
+            {(c.languages || []).slice(0, 1).map((l) => (
+              <span key={l} className="pill pill-gray" style={{padding:"0.25rem 0.625rem", fontSize:"0.7rem"}}>{l}</span>
             ))}
           </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-2 border-t border-[#E5E5E5] pt-3">
+          <div className="mt-4 grid grid-cols-3 gap-2 border-t border-white/10 pt-3">
             <div>
-              <div className="label-mini">Reach</div>
-              <div className="font-display text-base">{formatNum(totalFollowers)}</div>
+              <div className="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Reach</div>
+              <div className="font-display text-lg tracking-tight">{formatNum(totalFollowers)}</div>
             </div>
             <div>
-              <div className="label-mini">Score</div>
-              <div className="font-display text-base text-[#1A4331]">{c.performance_score}</div>
+              <div className="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Score</div>
+              <div className="font-display text-lg tracking-tight text-[#9D7CFF]">{c.performance_score}</div>
             </div>
             <div>
-              <div className="label-mini">From</div>
-              <div className="font-display text-base">₹{formatNum(minRate)}</div>
+              <div className="text-[10px] uppercase tracking-wider text-white/40 font-semibold">From</div>
+              <div className="font-display text-lg tracking-tight">₹{formatNum(minRate)}</div>
             </div>
           </div>
         </div>

@@ -70,17 +70,17 @@ export default function Onboarding() {
     return (
       <div className="max-w-4xl mx-auto px-6 py-16" data-testid="role-select">
         <h1 className="font-display text-5xl tracking-tight">Choose your role</h1>
-        <p className="text-[#525252] mt-2">You can have only one role per account.</p>
+        <p className="text-white/70 mt-2">You can have only one role per account.</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-10">
           {[
             { id: "creator", icon: <Sparkles size={28}/>, t: "I'm a Creator", d: "Build a public rate card, get discovered by brands, earn through collabs." },
             { id: "brand", icon: <Building2 size={28}/>, t: "I'm a Brand", d: "Discover creators, post campaigns, track ROI transparently." },
             { id: "talent_manager", icon: <Users size={28}/>, t: "Talent Manager", d: "Manage multiple creators, agency dashboard, bulk negotiations." },
           ].map((opt) => (
-            <button key={opt.id} data-testid={`role-${opt.id}`} onClick={()=>pickRole(opt.id)} className="text-left bg-white border border-[#E5E5E5] rounded-2xl p-8 hover:border-[#E84A27] hover:-translate-y-1 transition-all">
-              <div className="text-[#E84A27]">{opt.icon}</div>
+            <button key={opt.id} data-testid={`role-${opt.id}`} onClick={()=>pickRole(opt.id)} className="text-left bg-[#13131B] border border-white/10 rounded-2xl p-8 hover:border-[#7C5CFF] hover:-translate-y-1 transition-all">
+              <div className="text-[#9D7CFF]">{opt.icon}</div>
               <h3 className="font-display text-2xl mt-4">{opt.t}</h3>
-              <p className="text-sm text-[#525252] mt-2">{opt.d}</p>
+              <p className="text-sm text-white/70 mt-2">{opt.d}</p>
             </button>
           ))}
         </div>
@@ -93,9 +93,9 @@ export default function Onboarding() {
     return (
       <div className="max-w-3xl mx-auto px-6 py-16" data-testid="creator-onboarding">
         <h1 className="font-display text-4xl tracking-tight">Complete your creator profile</h1>
-        <p className="text-[#525252] mt-2">Public rate cards build trust. Fill all fields to unlock max visibility.</p>
+        <p className="text-white/70 mt-2">Public rate cards build trust. Fill all fields to unlock max visibility.</p>
 
-        <div className="mt-10 space-y-6 bg-white border border-[#E5E5E5] rounded-2xl p-8">
+        <div className="mt-10 space-y-6 bg-[#13131B] border border-white/10 rounded-2xl p-8">
           <div>
             <label className="label-mini block mb-1.5">Profile Photo URL</label>
             <input data-testid="onb-photo" value={creator.photo} onChange={(e)=>setCreator({...creator, photo:e.target.value})} className="input-field" placeholder="https://..."/>
@@ -126,7 +126,7 @@ export default function Onboarding() {
           <div>
             <label className="label-mini block mb-2">Languages</label>
             <div className="flex flex-wrap gap-2">{LANGUAGES.map(l => (
-              <button key={l} type="button" onClick={()=>toggleLang(l)} className={`px-3 py-1 text-sm border rounded-full ${creator.languages.includes(l) ? "bg-[#0A0A0A] text-white border-[#0A0A0A]" : "border-[#E5E5E5] text-[#525252]"}`}>{l}</button>
+              <button key={l} type="button" onClick={()=>toggleLang(l)} className={`px-3 py-1 text-sm border rounded-full ${creator.languages.includes(l) ? "bg-white/10 text-white border-white/20" : "border-white/10 text-white/70"}`}>{l}</button>
             ))}</div>
           </div>
 
@@ -177,7 +177,7 @@ export default function Onboarding() {
   return (
     <div className="max-w-2xl mx-auto px-6 py-16" data-testid="brand-onboarding">
       <h1 className="font-display text-4xl tracking-tight">Set up your brand</h1>
-      <div className="mt-10 space-y-5 bg-white border border-[#E5E5E5] rounded-2xl p-8">
+      <div className="mt-10 space-y-5 bg-[#13131B] border border-white/10 rounded-2xl p-8">
         <div><label className="label-mini block mb-1.5">Company Name</label><input data-testid="brand-name" value={brand.company_name} onChange={(e)=>setBrand({...brand, company_name:e.target.value})} className="input-field"/></div>
         <div><label className="label-mini block mb-1.5">Industry</label><input data-testid="brand-industry" value={brand.industry} onChange={(e)=>setBrand({...brand, industry:e.target.value})} className="input-field" placeholder="D2C / SaaS / E-commerce"/></div>
         <div className="grid grid-cols-2 gap-4">

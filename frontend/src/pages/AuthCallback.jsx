@@ -30,10 +30,10 @@ export default function AuthCallback() {
   }, [navigate, refreshUser]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#F7F5F2]" data-testid="auth-callback">
+    <div className="min-h-screen flex items-center justify-center bg-[#13131B]/5" data-testid="auth-callback">
       <div className="text-center">
         <div className="font-display text-3xl">Signing you in...</div>
-        <div className="mt-3 text-[#525252] text-sm">Establishing secure session</div>
+        <div className="mt-3 text-white/70 text-sm">Establishing secure session</div>
       </div>
     </div>
   );
