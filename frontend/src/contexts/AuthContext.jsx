@@ -8,6 +8,14 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   const checkAuth = useCallback(async () => {
+    // Skip /auth/me if no token + no cookie (avoids noisy 401 on first paint)
+    const hasToken = typeof window !== "undefined" && localStorage.getItem("ybex_token");
+    const hasCookie = typeof document !== "undefined" && document.cookie.includes("session_token=");
+    if (!hasToken && !hasCookie) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);

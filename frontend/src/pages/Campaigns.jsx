@@ -68,7 +68,7 @@ export default function Campaigns() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {campaigns.map((c) => (
-          <Link to={`/campaigns/${c.campaign_id}`} key={c.campaign_id} className="bg-white border border-[#E5E5E5] rounded-2xl p-6 hover:border-[#E84A27] hover:-translate-y-1 transition-all" data-testid={`campaign-${c.campaign_id}`}>
+          <Link to={`/campaigns/${c.campaign_id}`} key={c.campaign_id} className="bg-white border border-[#E5E5E5] rounded-2xl p-6 hover:border-[#E84A27] hover:-translate-y-1 transition-all" data-testid={`campaign-card-${c.campaign_id}`}>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs px-2 py-1 bg-[#1A4331]/10 text-[#1A4331] rounded-full font-semibold">LIVE</span>
               <span className="text-xs text-[#A3A3A3]">{(c.applicants||[]).length} applicants</span>

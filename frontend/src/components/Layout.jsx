@@ -60,7 +60,7 @@ export default function Layout({ children }) {
                   )}
                   <span className="text-sm font-medium">{user.name?.split(" ")[0]}</span>
                 </div>
-                <button onClick={onLogout} data-testid="logout-btn" className="p-2 hover:bg-[#F7F5F2] rounded-full" title="Logout">
+                <button onClick={onLogout} data-testid="logout-button" className="p-2 hover:bg-[#F7F5F2] rounded-full" title="Logout">
                   <LogOut size={18} />
                 </button>
               </>
