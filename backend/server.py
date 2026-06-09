@@ -278,6 +278,63 @@ async def set_role(req: RoleUpdateReq, request: Request):
     return {"ok": True, "role": req.role}
 
 
+async def admin_required(request: Request) -> dict:
+    user = await auth_required(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return user
+
+
+# =================== Admin ===================
+@api.get("/admin/stats")
+async def admin_stats(request: Request):
+    await admin_required(request)
+    return {
+        "users": await db.users.count_documents({}),
+        "creators": await db.creator_profiles.count_documents({}),
+        "brands": await db.brand_profiles.count_documents({}),
+        "campaigns": await db.campaigns.count_documents({}),
+        "live_campaigns": await db.campaigns.count_documents({"status": "live"}),
+        "collabs": await db.collabs.count_documents({}),
+        "waves": await db.waves.count_documents({}),
+        "messages": await db.chat_messages.count_documents({}),
+    }
+
+
+@api.get("/admin/users")
+async def admin_users(request: Request, limit: int = 100):
+    await admin_required(request)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(limit)
+    return users
+
+
+@api.get("/admin/campaigns")
+async def admin_campaigns(request: Request):
+    await admin_required(request)
+    return await db.campaigns.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api.post("/admin/users/{user_id}/ban")
+async def admin_ban(user_id: str, request: Request):
+    await admin_required(request)
+    await db.users.update_one({"user_id": user_id}, {"$set": {"banned": True}})
+    return {"ok": True}
+
+
+@api.post("/admin/users/{user_id}/unban")
+async def admin_unban(user_id: str, request: Request):
+    await admin_required(request)
+    await db.users.update_one({"user_id": user_id}, {"$set": {"banned": False}})
+    return {"ok": True}
+
+
+@api.delete("/admin/campaigns/{campaign_id}")
+async def admin_delete_campaign(campaign_id: str, request: Request):
+    await admin_required(request)
+    await db.campaigns.delete_one({"campaign_id": campaign_id})
+    return {"ok": True}
+
+
 # =================== Creator Profiles ===================
 def compute_engagement_score(profile: dict) -> dict:
     """Mock AI-based scoring."""

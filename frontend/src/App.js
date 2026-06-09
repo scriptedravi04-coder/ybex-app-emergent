@@ -20,6 +20,7 @@ import Leaderboard from "./pages/Leaderboard";
 import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import Chat from "./pages/Chat";
+import Admin from "./pages/Admin";
 
 function ProtectedRoute({ children, requireOnboarded = false }) {
   const { user, loading } = useAuth();
@@ -66,6 +67,7 @@ function AnimatedRoutes() {
         <Route path="/leaderboard" element={<Layout><Page><Leaderboard /></Page></Layout>} />
         <Route path="/notifications" element={<ProtectedRoute><Layout><Page><Notifications /></Page></Layout></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><Layout><Page><Settings /></Page></Layout></ProtectedRoute>} />
+        <Route path="/admin" element={<ProtectedRoute><Layout><Page><Admin /></Page></Layout></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AnimatePresence>

@@ -42,6 +42,7 @@ export default function Layout({ children }) {
             </Link>
             {user && <NavItem to="/chat" testId="nav-chat">Chat</NavItem>}
             {user && <NavItem to="/dashboard" testId="nav-dashboard">Dashboard</NavItem>}
+            {user?.role === "admin" && <NavItem to="/admin" testId="nav-admin">Admin</NavItem>}
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
